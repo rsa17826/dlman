@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="dark.css">
+<style>
+  body { font-family: system-ui, sans-serif; width: 380px; margin: 0; padding: 10px; font-size: 13px; }
+  h2 { font-size: 14px; margin: 6px 0; }
+  .job { border-bottom: 1px solid #ddd; padding: 6px 0; }
+  .job .fname { font-weight: 600; word-break: break-all; }
+  .job .url { color: #666; font-size: 11px; word-break: break-all; }
+  .status { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; color: #fff; }
+  .status.queued { background: #999; }
+  .status.downloading { background: #2b7de9; }
+  .status.done { background: #2e9e4f; }
+  .status.error { background: #cc3333; }
+  .status.cancelled { background: #b8860b; }
+  .progress-track { background: #eee; border-radius: 3px; height: 6px; margin: 4px 0; overflow: hidden; }
+  .progress-fill { background: #2b7de9; height: 100%; transition: width 0.2s ease; }
+  .actions { margin-top: 4px; }
+  .actions button { font-size: 11px; padding: 2px 8px; margin-right: 4px; cursor: pointer; }
+  .error-msg { color: #cc3333; font-size: 11px; }
+  #excludeList { list-style: none; padding: 0; margin: 4px 0; }
+  #excludeList li { display: flex; justify-content: space-between; padding: 2px 0; }
+  #excludeInput { width: 260px; }
+  #jobs { max-height: 300px; overflow-y: auto; }
+  .empty { color: #888; padding: 8px 0; }
+</style>
+</head>
+<body>
+  <h2>Downloads</h2>
+  <div id="jobs"><div class="empty">No downloads yet.</div></div>
+
+  <h2>Excluded URLs</h2>
+  <p style="color:#666; margin: 2px 0;">Downloads from these origins go through Chrome normally, not this extension. Prefix match, e.g. <code>https://claude.ai</code>.</p>
+  <ul id="excludeList"></ul>
+  <input id="excludeInput" type="text" placeholder="https://example.com">
+  <button id="addExclude">Add</button>
+
+  <script src="popup.js"></script>
+</body>
+</html>

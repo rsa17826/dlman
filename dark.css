@@ -1,0 +1,119 @@
+/* 1. The "Magic" fix for system UI elements */
+html {
+  color-scheme: dark;
+}
+
+:root {
+  --bg-color: #121212;
+  --surface-color: #1e1e1e;
+  --text-primary: #e0e0e0;
+  --accent-color: #bb86fc; /* Purple */
+  --accent-secondary: #03dac6; /* Teal */
+  --border-color: #333333;
+}
+
+body {
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  line-height: 1.5;
+  margin: 0;
+  padding: 1rem; /* Reduced from 2rem */
+}
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+
+  /* Use 'px' for absolute control to prevent scaling issues */
+  width: 18px;
+  height: 18px;
+
+  /* CRITICAL: Prevents stretching in Flex/Grid layouts */
+  flex: none;
+  display: inline-grid;
+  place-content: center;
+
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background 0.2s;
+}
+
+input[type="checkbox"]:checked {
+  background-color: var(--accent-color);
+  border-color: var(--accent-color);
+}
+
+/* The Checkmark */
+input[type="checkbox"]::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  background-color: #000; /* Visible check color */
+  transform: scale(0);
+  transition: 100ms transform ease-in-out;
+
+  /* The shape of the check */
+  clip-path: polygon(
+    14% 44%,
+    0 65%,
+    50% 100%,
+    100% 16%,
+    80% 0%,
+    43% 62%
+  );
+}
+
+input[type="checkbox"]:checked::before {
+  transform: scale(1);
+}
+
+/* --- Compact Base Elements --- */
+input,
+textarea,
+select,
+button {
+  background-color: var(--surface-color);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 0.95rem;
+}
+
+button {
+  background-color: var(--accent-color);
+  color: #000;
+  font-weight: 600;
+  padding: 0.3rem .4rem;
+  border: none;
+  cursor: pointer;
+}
+
+h1,
+h2,
+h3 {
+  margin: 1rem 0 0.5rem 0;
+}
+
+code {
+  padding: 0.1rem 0.3rem;
+  background: var(--surface-color);
+}
+
+/* 2. Target the specific arrows (Spin Buttons) */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  /* This forces the browser to use a dark-themed version of the arrows */
+  filter: invert(1) brightness(0.8);
+  cursor: pointer;
+}
+
+/* 3. Ensure the input itself looks compact and dark */
+input[type="number"] {
+  background-color: var(--surface-color);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  padding: 0.3rem 0.5rem; /* Compact padding */
+  border-radius: 4px;
+}

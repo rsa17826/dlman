@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Download Manager Redirector",
+  "version": "1.0.0",
+  "description": "Redirects downloads to a local multithreaded download manager",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6qNcfpQigohajfrd4NhZ+G0gsvocE5I8eGtl8y/nUFUypuRGktwbrIvyyFR8kDNjG71CbqL4tSonV12XvPSCAy8rRP6gFVEs05w4ldY7xCi2qX+qmnxXlThQfnGYg2YDtQYSwCiMkMQ0z1qdo6coocHgPwI9rOR1/+GCycXZKyTy3nC5ATOzhuM17WQNBs0RFo5s6eSz/W89iatKaYaY7/X8vS2fuY3//0ihKI3OJRTB5pIdVaHW7CZEaPv1mQgksXAEPf02raEStDQHYI4uBGgmpKqnZWMCZkxCybn9XqvDtRwI8u/JMH4Fb0On7RxNzhpwGutT1LFXfaxDENp4ZQIDAQAB",
+  "permissions": [
+    "downloads",
+    "webRequest",
+    "cookies",
+    "nativeMessaging",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
