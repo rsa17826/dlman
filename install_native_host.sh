@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-HOST_PATH="$(which _dlman)"
+HOST_PATH="$(which dlman)"
 CHROME_EXT_ID="jgoldecddaakookanlkpdiomnkmoifnb"
 HOST_NAME="com.yourapp.dlmandownloader"
 
