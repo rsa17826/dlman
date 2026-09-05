@@ -1,3 +1,4 @@
+import hashlib
 import os
 import threading
 import time
@@ -6,6 +7,44 @@ import requests
 
 class DownloadCancelled(Exception):
   pass
+
+
+def next_available_path(path):
+  """If `path` doesn't exist, return it unchanged. Otherwise find the
+  first "name_1.ext", "name_2.ext", ... that doesn't exist yet."""
+  if not os.path.exists(path):
+    return path
+
+  base, ext = os.path.splitext(path)
+  n = 1
+  while True:
+    candidate = f"{base}_{n}{ext}"
+    if not os.path.exists(candidate):
+      return candidate
+
+    n += 1
+
+
+def files_identical(path_a, path_b, chunk_size=1024 * 1024):
+  """Compare two files' content without loading either fully into memory.
+  Cheap size check first, then a streaming hash comparison."""
+  if os.path.getsize(path_a) != os.path.getsize(path_b):
+    return False
+
+  hash_a = hashlib.sha256()
+  hash_b = hashlib.sha256()
+  with open(path_a, "rb") as fa, open(path_b, "rb") as fb:
+    while True:
+      chunk_a = fa.read(chunk_size)
+      chunk_b = fb.read(chunk_size)
+      if not chunk_a and not chunk_b:
+        break
+
+      hash_a.update(chunk_a)
+      hash_b.update(chunk_b)
+
+
+  return hash_a.digest() == hash_b.digest()
 
 
 def parse_headers(header_list, drop_content_type=False):

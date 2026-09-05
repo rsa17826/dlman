@@ -17,9 +17,16 @@ import threading
 import traceback
 import urllib.parse
 
-from downloader import multithreaded_download, parse_headers, build_multipart_files, DownloadCancelled
+from downloader import (
+  multithreaded_download,
+  parse_headers,
+  build_multipart_files,
+  DownloadCancelled,
+  next_available_path,
+  files_identical,
+)
 
-LOG_PATH = os.path.expanduser("/tmp/dlman_debug.log")
+LOG_PATH = os.path.expanduser("~/dlman_debug.log")
 send_lock = threading.Lock()
 
 registry_lock = threading.Lock()
@@ -118,7 +125,8 @@ def handle_job(msg):
 
     return
 
-  out_path = os.path.join(os.path.expanduser("~/Downloads"), filename)
+  desired_path = os.path.join(os.path.expanduser("~/Downloads"), filename)
+  out_path = next_available_path(desired_path)
   log(f"[{job_id}] downloading to {out_path}")
   send_message({"jobId": job_id, "status": "started", "url": url, "path": out_path})
 
@@ -137,8 +145,24 @@ def handle_job(msg):
       cancel_event=cancel_event,
       progress_cb=report_progress,
     )
+
+    # If we had to use a "_1"-style suffix because desired_path already
+    # existed, check whether the new file is actually a duplicate of
+    # the existing one. If so, there's no reason to keep two copies:
+    # drop the old one and take over the clean, unsuffixed name.
+    final_path = out_path
+    if out_path != desired_path:
+      if files_identical(desired_path, out_path):
+        log(f"[{job_id}] new download is identical to existing {desired_path}, replacing it")
+        os.remove(desired_path)
+        os.rename(out_path, desired_path)
+        final_path = desired_path
+      else:
+        log(f"[{job_id}] new download differs from existing {desired_path}, keeping both")
+
+
     log(f"[{job_id}] download succeeded: {result}")
-    send_message({"jobId": job_id, "status": "done", "url": url, "path": out_path, **result})
+    send_message({"jobId": job_id, "status": "done", "url": url, "path": final_path, **result})
 
   except DownloadCancelled:
     log(f"[{job_id}] download cancelled")
