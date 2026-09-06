@@ -89,7 +89,7 @@ async function upsertJob(jobId, patch) {
 let nativePort
 function connectNativeHost() {
   if (nativePort) return nativePort
-  nativePort = chrome.runtime.connectNative("com.yourapp.dlmandownloader")
+  nativePort = chrome.runtime.connectNative("com.yourapp.downloader")
   nativePort.onDisconnect.addListener(() => {
     if (chrome.runtime.lastError)
       console.error(chrome.runtime.lastError.message)
@@ -157,6 +157,7 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
   const { id, url, filename, mime, finalUrl } = item
   const target = finalUrl || url
 
+  if (target.startsWith("blob:")) return // not fetchable outside the originating page
   if (isExcludedUrl(target)) return // let Chrome handle this download normally
   if (inFlight.has(id)) return
   inFlight.add(id)

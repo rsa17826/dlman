@@ -35,7 +35,7 @@ cancel_events = {} # jobId -> threading.Event, only valid within this process's 
 
 def resolve_filename(msg_filename, url):
   """Chrome's downloadItem.filename is often empty or just the download
-  directory at onCreated time -- the real filename isn't assigned until
+  directory at onCreated time -- the real filename isn't assigned duntil
   onDeterminingFilename, which we never reach because we cancel earlier.
   Fall back to the URL's path component, which is real data from the
   actual request rather than a made-up default."""
