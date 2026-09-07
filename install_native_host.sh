@@ -14,7 +14,7 @@ set -euo pipefail
 
 HOST_PATH="$(which dlman)"
 CHROME_EXT_ID="jgoldecddaakookanlkpdiomnkmoifnb"
-HOST_NAME="com.yourapp.dlmandownloader"
+HOST_NAME="com.nyix.dlman"
 
 if [[ ! -x "$HOST_PATH" ]]; then
   echo "ERROR: $HOST_PATH does not exist or is not executable" >&2

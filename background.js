@@ -89,7 +89,7 @@ async function upsertJob(jobId, patch) {
 let nativePort
 function connectNativeHost() {
   if (nativePort) return nativePort
-  nativePort = chrome.runtime.connectNative("com.yourapp.downloader")
+  nativePort = chrome.runtime.connectNative("com.nyix.dlman")
   nativePort.onDisconnect.addListener(() => {
     if (chrome.runtime.lastError)
       console.error(chrome.runtime.lastError.message)
