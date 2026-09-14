@@ -88,15 +88,32 @@ def build_multipart_files(form_data):
 
 
 def probe(url, headers):
-  """HEAD request to determine size and whether range requests are supported.
+  """Ranged GET (bytes=0-0) to determine size and whether range requests are
+  supported. A plain HEAD is unsafe here: presigned URLs (S3/R2 style, with
+  X-Amz-Signature etc.) sign the HTTP method into the signature, so a URL
+  captured from a GET navigation returns 403 when probed with HEAD.
   Some servers lie about Accept-Ranges or omit it but still honor Range, so
   this is a hint, not a guarantee -- the real check happens on first chunk
   request via the returned status code."""
-  resp = requests.head(url, headers=headers, allow_redirects=True, timeout=15)
-  resp.raise_for_status()
-  size = resp.headers.get("Content-Length")
-  accepts_ranges = resp.headers.get("Accept-Ranges", "").lower() == "bytes"
-  return (int(size) if size is not None else None), accepts_ranges, resp.url
+  probe_headers = dict(headers)
+  probe_headers["Range"] = "bytes=0-0"
+  resp = requests.get(url, headers=probe_headers, allow_redirects=True, stream=True, timeout=15)
+  try:
+    resp.raise_for_status()
+    if resp.status_code == 206:
+      accepts_ranges = True
+      content_range = resp.headers.get("Content-Range", "")
+      total = content_range.rsplit("/", 1)[-1] if "/" in content_range else None
+      size = int(total) if total and total.isdigit() else None
+    else:
+      accepts_ranges = resp.headers.get("Accept-Ranges", "").lower() == "bytes"
+      length = resp.headers.get("Content-Length")
+      size = int(length) if length is not None else None
+
+    return size, accepts_ranges, resp.url
+
+  finally:
+    resp.close()
 
 
 class ProgressTracker:
