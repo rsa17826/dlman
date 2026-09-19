@@ -7,7 +7,9 @@ const inFlight = new Set() // download ids already forwarded, to prevent duplica
 let excludedPatterns = []
 
 async function loadExcludedPatterns() {
-  const { excludedPatterns: stored } = await chrome.storage.local.get("excludedPatterns")
+  const { excludedPatterns: stored } = await chrome.storage.local.get(
+    "excludedPatterns",
+  )
   excludedPatterns = stored ?? []
 }
 loadExcludedPatterns()
@@ -23,7 +25,10 @@ function isExcludedUrl(url) {
     // Patterns are simple "scheme://host[:port]/*" or "*://host/*" style
     // origin prefixes -- match on origin prefix, not full glob syntax.
     const prefix = pattern.replace(/\*$/, "")
-    return url.startsWith(prefix) || url.includes(prefix.replace(/^\*:\/\//, ""))
+    return (
+      url.startsWith(prefix) ||
+      url.includes(prefix.replace(/^\*:\/\//, ""))
+    )
   })
 }
 
@@ -71,6 +76,41 @@ chrome.webRequest.onSendHeaders.addListener(
   ["requestHeaders", "extraHeaders"],
 )
 
+// --- Badge / Icon Progress Indicator --------------------------------------
+
+async function updateActionBadge() {
+  const { jobs = {} } = await chrome.storage.local.get("jobs")
+  const activeJobs = Object.values(jobs).filter(
+    (j) => j.status === "downloading" || j.status === "queued",
+  )
+
+  if (activeJobs.length === 0) {
+    // Clear badge when no active downloads
+    await chrome.action.setBadgeText({ text: "" })
+    return
+  }
+
+  // Calculate overall progress or show active count/percentage
+  // If there's a single primary active download with a known total, show its percentage
+  const downloading = activeJobs.find(
+    (j) => j.status === "downloading" && j.totalBytes,
+  )
+  if (downloading) {
+    const pct = Math.round(
+      Math.min(
+        100,
+        (downloading.bytesReceived / downloading.totalBytes) * 100,
+      ),
+    )
+    await chrome.action.setBadgeText({ text: `${pct}%` })
+    await chrome.action.setBadgeBackgroundColor({ color: "#2b7de9" }) // Blue
+  } else {
+    // Otherwise, show the count of active/queued tasks
+    await chrome.action.setBadgeText({ text: `${activeJobs.length}` })
+    await chrome.action.setBadgeBackgroundColor({ color: "#bb86fc" }) // Accent purple
+  }
+}
+
 async function getCookiesFor(url) {
   const cookies = await chrome.cookies.getAll({ url })
   return cookies.map((c) => `${c.name}=${c.value}`).join("; ")
@@ -82,6 +122,7 @@ async function upsertJob(jobId, patch) {
   const { jobs = {} } = await chrome.storage.local.get("jobs")
   jobs[jobId] = { ...jobs[jobId], ...patch, updatedAt: Date.now() }
   await chrome.storage.local.set({ jobs })
+  await updateActionBadge()
 }
 
 // --- Native messaging -----------------------------------------------------
@@ -100,9 +141,18 @@ function connectNativeHost() {
     if (msg.status === "started") {
       upsertJob(msg.jobId, { status: "downloading" })
     } else if (msg.status === "progress") {
-      upsertJob(msg.jobId, { status: "downloading", bytesReceived: msg.bytesReceived, totalBytes: msg.totalBytes })
+      upsertJob(msg.jobId, {
+        status: "downloading",
+        bytesReceived: msg.bytesReceived,
+        totalBytes: msg.totalBytes,
+      })
     } else if (msg.status === "done") {
-      upsertJob(msg.jobId, { status: "done", path: msg.path, bytes: msg.bytes, mode: msg.mode })
+      upsertJob(msg.jobId, {
+        status: "done",
+        path: msg.path,
+        bytes: msg.bytes,
+        mode: msg.mode,
+      })
     } else if (msg.status === "cancelled") {
       upsertJob(msg.jobId, { status: "cancelled" })
     } else if (msg.status === "error") {
@@ -122,75 +172,90 @@ async function removeJob(jobId) {
   const { jobs = {} } = await chrome.storage.local.get("jobs")
   delete jobs[jobId]
   await chrome.storage.local.set({ jobs })
+  await updateActionBadge()
 }
 
 // --- Popup -> background messaging -----------------------------------------
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === "cancel") {
-    sendToNativeHost({ action: "cancel", jobId: message.jobId })
-  } else if (message.action === "delete") {
-    ;(async () => {
-      const { jobs = {} } = await chrome.storage.local.get("jobs")
-      const job = jobs[message.jobId]
-      if (job && job.status === "done" && job.path) {
-        // Ask the host to remove the actual file; job entry is removed once
-        // it confirms via "file_deleted" so we don't lose track of a file
-        // deletion that failed.
-        sendToNativeHost({ action: "delete_file", jobId: message.jobId, path: job.path })
-      } else {
-        // Not a completed download with a file on disk (e.g. still queued,
-        // already errored, or already cancelled) -- just drop the record.
-        if (job && job.status === "downloading") {
-          sendToNativeHost({ action: "cancel", jobId: message.jobId })
+chrome.runtime.onMessage.addListener(
+  (message, sender, sendResponse) => {
+    if (message.action === "cancel") {
+      sendToNativeHost({ action: "cancel", jobId: message.jobId })
+    } else if (message.action === "delete") {
+      ;(async () => {
+        const { jobs = {} } = await chrome.storage.local.get("jobs")
+        const job = jobs[message.jobId]
+        if (job && job.status === "done" && job.path) {
+          // Ask the host to remove the actual file; job entry is removed once
+          // it confirms via "file_deleted" so we don't lose track of a file
+          // deletion that failed.
+          sendToNativeHost({
+            action: "delete_file",
+            jobId: message.jobId,
+            path: job.path,
+          })
+        } else {
+          // Not a completed download with a file on disk (e.g. still queued,
+          // already errored, or already cancelled) -- just drop the record.
+          if (job && job.status === "downloading") {
+            sendToNativeHost({
+              action: "cancel",
+              jobId: message.jobId,
+            })
+          }
+          await removeJob(message.jobId)
         }
-        await removeJob(message.jobId)
-      }
-    })()
-  }
-  return false
-})
+      })()
+    }
+    return false
+  },
+)
 
 // --- Download interception --------------------------------------------------
 
-chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
-  const { id, url, filename, mime, finalUrl } = item
-  const target = finalUrl || url
+chrome.downloads.onDeterminingFilename.addListener(
+  (item, suggest) => {
+    const { id, url, filename, mime, finalUrl } = item
+    const target = finalUrl || url
 
-  if (target.startsWith("blob:")) return // not fetchable outside the originating page
-  if (isExcludedUrl(target)) return // let Chrome handle this download normally
-  if (inFlight.has(id)) return
-  inFlight.add(id)
+    if (target.startsWith("blob:")) return // not fetchable outside the originating page
+    if (isExcludedUrl(target)) return // let Chrome handle this download normally
+    if (inFlight.has(id)) return
+    inFlight.add(id)
 
-  const jobId = crypto.randomUUID()
+    const jobId = crypto.randomUUID()
 
-  // We're aborting this download entirely, so don't call suggest() --
-  // there's no filename decision left for Chrome to make.
-  ;(async () => {
-    const captured = pendingRequests.get(target) ?? pendingRequests.get(url)
-    const cookieHeader = await getCookiesFor(target)
+    // We're aborting this download entirely, so don't call suggest() --
+    // there's no filename decision left for Chrome to make.
+    ;(async () => {
+      const captured =
+        pendingRequests.get(target) ?? pendingRequests.get(url)
+      const cookieHeader = await getCookiesFor(target)
 
-    await upsertJob(jobId, {
-      url: target,
-      filename: filename || target.split("/").pop(),
-      status: "queued",
-      startedAt: Date.now(),
-    })
+      await upsertJob(jobId, {
+        url: target,
+        filename: filename || target.split("/").pop(),
+        status: "queued",
+        startedAt: Date.now(),
+      })
 
-    await chrome.downloads.cancel(id)
-    await chrome.downloads.erase({ id })
+      await chrome.downloads.cancel(id)
+      await chrome.downloads.erase({ id })
 
-    const payload = {
-      jobId,
-      url: target,
-      filename,
-      mime,
-      method: captured?.method ?? "GET",
-      body: captured?.body ?? null,
-      headers: captured?.headers ?? [],
-      cookies: cookieHeader,
-    }
+      const payload = {
+        jobId,
+        url: target,
+        filename,
+        mime,
+        method: captured?.method ?? "GET",
+        body: captured?.body ?? null,
+        headers: captured?.headers ?? [],
+        cookies: cookieHeader,
+      }
 
-    sendToNativeHost(payload)
-  })()
-})
+      sendToNativeHost(payload)
+    })()
+  },
+)
+
+updateActionBadge()
