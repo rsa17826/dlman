@@ -39,7 +39,7 @@ async function renderJobs() {
           const pct = Math.min(100, (received / total) * 100)
           detail = `
             <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
-            <div class="url">${fmtBytes(received)} / ${fmtBytes(total)} (${pct.toFixed(0)}%)</div>`
+            <div class="url">${fmtBytes(received)} / ${fmtBytes(total)} (${Math.floor(pct)}%)</div>`
         } else {
           // Size unknown (e.g. dynamically generated content) -- show bytes
           // received without a percentage rather than a fake/frozen bar.

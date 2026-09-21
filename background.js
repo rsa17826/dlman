@@ -96,7 +96,7 @@ async function updateActionBadge() {
     (j) => j.status === "downloading" && j.totalBytes,
   )
   if (downloading) {
-    const pct = Math.round(
+    const pct = Math.floor(
       Math.min(
         100,
         (downloading.bytesReceived / downloading.totalBytes) * 100,
