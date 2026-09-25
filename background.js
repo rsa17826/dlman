@@ -219,6 +219,7 @@ chrome.downloads.onDeterminingFilename.addListener(
     const target = finalUrl || url
 
     if (target.startsWith("blob:")) return // not fetchable outside the originating page
+    if (target.startsWith("data:")) return // No connection adapters were found for 'data:text/plain,{%0A
     if (isExcludedUrl(target)) return // let Chrome handle this download normally
     if (inFlight.has(id)) return
     inFlight.add(id)
