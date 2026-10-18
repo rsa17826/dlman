@@ -1,7 +1,15 @@
+"""Helpers shared by the native host: header cleanup, collision-safe naming,
+duplicate detection, and the built-in single-stream downloader.
+
+The built-in downloader only handles requests aria2 can't (POST with a body).
+Plain GET downloads go to aria2 -- see aria2_client.py.
+"""
+
 import hashlib
 import os
 import threading
 import time
+
 import requests
 
 
@@ -9,53 +17,33 @@ class DownloadCancelled(Exception):
   pass
 
 
-def next_available_path(path):
-  """If `path` doesn't exist, return it unchanged. Otherwise find the
-  first "name_1.ext", "name_2.ext", ... that doesn't exist yet."""
-  if not os.path.exists(path):
-    return path
-
-  base, ext = os.path.splitext(path)
-  n = 1
-  while True:
-    candidate = f"{base}_{n}{ext}"
-    if not os.path.exists(candidate):
-      return candidate
-
-    n += 1
-
-
-def files_identical(path_a, path_b, chunk_size=1024 * 1024):
-  """Compare two files' content without loading either fully into memory.
-  Cheap size check first, then a streaming hash comparison."""
-  if os.path.getsize(path_a) != os.path.getsize(path_b):
-    return False
-
-  hash_a = hashlib.sha256()
-  hash_b = hashlib.sha256()
-  with open(path_a, "rb") as fa, open(path_b, "rb") as fb:
-    while True:
-      chunk_a = fa.read(chunk_size)
-      chunk_b = fb.read(chunk_size)
-      if not chunk_a and not chunk_b:
-        break
-
-      hash_a.update(chunk_a)
-      hash_b.update(chunk_b)
-
-
-  return hash_a.digest() == hash_b.digest()
+# Headers describing the *browser's* transfer state rather than the resource
+# being requested. Forwarding them breaks downloads:
+#  - accept-encoding: aria2 forwards it verbatim but can't decode br/zstd, so
+#    a compressed response would be saved corrupted.
+#  - range / if-*: a browser revalidation or media-range request would make
+#    the server answer 206/304 instead of the full file.
+_SKIPPED_HEADERS = {
+  "host",
+  "content-length",
+  "connection",
+  "accept-encoding",
+  "range",
+  "if-range",
+  "if-none-match",
+  "if-modified-since",
+  "if-match",
+  "if-unmodified-since",
+}
 
 
 def parse_headers(header_list, drop_content_type=False):
   """Convert the captured Chrome webRequest header list [{name, value}, ...]
-  into a plain dict, skipping ones that requests sets itself or that
-  Chrome won't let us reuse anyway (e.g. Host, Content-Length). When we're
+  into a plain dict, dropping headers that must not be replayed. When we're
   reconstructing a multipart body ourselves (drop_content_type=True), the
   captured Content-Type's boundary won't match the one requests generates
-  for our reconstructed body, so it must be dropped and let requests set
-  its own."""
-  skip = {"host", "content-length", "connection"}
+  for our reconstructed body, so it is dropped too and requests sets its own."""
+  skip = set(_SKIPPED_HEADERS)
   if drop_content_type:
     skip.add("content-type")
 
@@ -87,39 +75,45 @@ def build_multipart_files(form_data):
   return entries
 
 
-def probe(url, headers):
-  """Ranged GET (bytes=0-0) to determine size and whether range requests are
-  supported. A plain HEAD is unsafe here: presigned URLs (S3/R2 style, with
-  X-Amz-Signature etc.) sign the HTTP method into the signature, so a URL
-  captured from a GET navigation returns 403 when probed with HEAD.
-  Some servers lie about Accept-Ranges or omit it but still honor Range, so
-  this is a hint, not a guarantee -- the real check happens on first chunk
-  request via the returned status code."""
-  probe_headers = dict(headers)
-  probe_headers["Range"] = "bytes=0-0"
-  resp = requests.get(url, headers=probe_headers, allow_redirects=True, stream=True, timeout=15)
-  try:
-    resp.raise_for_status()
-    if resp.status_code == 206:
-      accepts_ranges = True
-      content_range = resp.headers.get("Content-Range", "")
-      total = content_range.rsplit("/", 1)[-1] if "/" in content_range else None
-      size = int(total) if total and total.isdigit() else None
-    else:
-      accepts_ranges = resp.headers.get("Accept-Ranges", "").lower() == "bytes"
-      length = resp.headers.get("Content-Length")
-      size = int(length) if length is not None else None
+def next_available_path(path, taken=()):
+  """First of "name.ext", "name_1.ext", "name_2.ext", ... that doesn't exist
+  on disk and isn't in `taken` (paths other in-flight downloads have
+  reserved but not created yet)."""
+  base, ext = os.path.splitext(path)
+  candidate = path
+  n = 0
+  while os.path.exists(candidate) or candidate in taken:
+    n += 1
+    candidate = f"{base}_{n}{ext}"
 
-    return size, accepts_ranges, resp.url
+  return candidate
 
-  finally:
-    resp.close()
+
+def files_identical(path_a, path_b, chunk_size=1024 * 1024):
+  """Compare two files' content without loading either fully into memory.
+  Cheap size check first, then a streaming hash comparison."""
+  if os.path.getsize(path_a) != os.path.getsize(path_b):
+    return False
+
+  hash_a = hashlib.sha256()
+  hash_b = hashlib.sha256()
+  with open(path_a, "rb") as fa, open(path_b, "rb") as fb:
+    while True:
+      chunk_a = fa.read(chunk_size)
+      chunk_b = fb.read(chunk_size)
+      if not chunk_a and not chunk_b:
+        break
+
+      hash_a.update(chunk_a)
+      hash_b.update(chunk_b)
+
+
+  return hash_a.digest() == hash_b.digest()
 
 
 class ProgressTracker:
-  """Aggregates byte counts across threads and calls progress_cb at most
-  once every `interval` seconds, so a fast local download doesn't flood
-  the native messaging pipe with a message per 256KB chunk."""
+  """Calls progress_cb at most once every `interval` seconds, so a fast local
+  download doesn't flood the native messaging pipe with a message per chunk."""
 
   def __init__(self, total, progress_cb, interval=0.25):
     self.total = total
@@ -148,158 +142,35 @@ class ProgressTracker:
 
 
 
-def download_range(url, headers, start, end, out_path, errors, index, cancel_event, tracker):
-  """Fetch bytes [start, end] inclusive and write them at the correct offset.
-  Raises into `errors[index]` rather than swallowing, so a failed chunk is
-  visible instead of silently producing a truncated file."""
-  expected_len = end - start + 1
-  range_headers = dict(headers)
-  range_headers["Range"] = f"bytes={start}-{end}"
-  resp = None
-  try:
-    resp = requests.get(url, headers=range_headers, stream=True, timeout=30)
-    if resp.status_code != 206:
-      raise RuntimeError(f"expected 206 Partial Content, got {resp.status_code} for range {start}-{end}")
+def stream_download(url, headers, cookie_header, out_path, method="GET", body=None, files=None, cancel_event=None, progress_cb=None):
+  """Single-connection download with any method/body. Used for POST-driven
+  downloads (e.g. a form that generates a zip server-side), which can't be
+  handed to aria2 and can't be split into ranges because each request may
+  regenerate different content."""
+  headers = dict(headers)
+  # Ask for the bytes as stored: requests only decodes some content
+  # encodings, so a compressed response could otherwise be saved corrupted.
+  headers["Accept-Encoding"] = "identity"
+  if cookie_header:
+    headers["Cookie"] = cookie_header
 
-    # Some servers return 206 but ignore Range and send the whole file
-    # anyway. Content-Range on a real partial response looks like
-    # "bytes start-end/total" -- verify it matches what we asked for.
-    content_range = resp.headers.get("Content-Range", "")
-    expected_prefix = f"bytes {start}-{end}/"
-    if not content_range.startswith(expected_prefix):
-      raise RuntimeError(f"server ignored Range request: asked for {start}-{end}, got Content-Range: {content_range!r}")
-
-    content_length = resp.headers.get("Content-Length")
-    if content_length is not None and int(content_length) != expected_len:
-      raise RuntimeError(f"response length {content_length} != requested range length {expected_len} for {start}-{end}")
-
-    with open(out_path, "r+b") as f:
-      f.seek(start)
-      written = 0
-      for chunk in resp.iter_content(chunk_size=1024 * 256):
-        if cancel_event.is_set():
-          raise DownloadCancelled()
-
-        remaining = expected_len - written
-        if remaining <= 0:
-          break
-
-        if len(chunk) > remaining:
-          # Hard cap: never write past this thread's assigned
-          # window even if the server sent extra bytes.
-          chunk = chunk[:remaining]
-
-        f.write(chunk)
-        written += len(chunk)
-        tracker.add(len(chunk))
-
-      if not cancel_event.is_set() and written != expected_len:
-        raise RuntimeError(f"wrote {written} bytes, expected {expected_len} for range {start}-{end}")
-
-
-
-  except Exception as e:
-    errors[index] = e
-
-  finally:
-    if resp is not None:
-      resp.close()
-
-
-
-def download_single_stream(url, headers, out_path, method="GET", body=None, files=None, cancel_event=None, tracker=None):
-  """Handles plain GET downloads, POST-with-raw-body downloads, and
-  POST-with-reconstructed-multipart downloads (files= builds the
-  multipart body and its matching Content-Type/boundary itself)."""
   resp = requests.request(method, url, headers=headers, data=body, files=files, stream=True, timeout=60)
   try:
     resp.raise_for_status()
+    length = resp.headers.get("Content-Length")
+    tracker = ProgressTracker(int(length) if length is not None else None, progress_cb)
     with open(out_path, "wb") as f:
       for chunk in resp.iter_content(chunk_size=1024 * 256):
         if cancel_event is not None and cancel_event.is_set():
           raise DownloadCancelled()
 
         f.write(chunk)
-        if tracker is not None:
-          tracker.add(len(chunk))
+        tracker.add(len(chunk))
 
 
-
+    tracker.finish()
 
   finally:
     resp.close()
 
-
-def multithreaded_download(url, headers, cookie_header, out_path, method="GET", body=None, files=None, num_threads=8, cancel_event=None, progress_cb=None):
-  if cancel_event is None:
-    cancel_event = threading.Event()
-
-  if cookie_header:
-    headers = dict(headers)
-    headers["Cookie"] = cookie_header
-
-  if method != "GET":
-    # Non-GET (e.g. POST-driven dynamic zip generation) can't be safely
-    # split into parallel range requests -- each request may produce
-    # different content, so multiple requests would race and corrupt
-    # the output rather than fetch slices of one consistent file.
-    tracker = ProgressTracker(total=None, progress_cb=progress_cb)
-    download_single_stream(url, headers, out_path, method=method, body=body, files=files, cancel_event=cancel_event, tracker=tracker)
-    if cancel_event.is_set():
-      raise DownloadCancelled()
-
-    tracker.finish()
-    return {"mode": "single_stream_non_get", "bytes": os.path.getsize(out_path)}
-
-  size, accepts_ranges, final_url = probe(url, headers)
-
-  if size is None or not accepts_ranges or size < num_threads * 1024 * 1024:
-    # Unknown size, no range support, or too small to bother splitting.
-    tracker = ProgressTracker(total=size, progress_cb=progress_cb)
-    download_single_stream(final_url, headers, out_path, cancel_event=cancel_event, tracker=tracker)
-    if cancel_event.is_set():
-      raise DownloadCancelled()
-
-    tracker.finish()
-    return {"mode": "single_stream", "bytes": os.path.getsize(out_path)}
-
-  # Preallocate the file so each thread can seek+write its own region.
-  with open(out_path, "wb") as f:
-    f.truncate(size)
-
-  chunk_size = size // num_threads
-  ranges = []
-  for i in range(num_threads):
-    start = i * chunk_size
-    end = size - 1 if i == num_threads - 1 else start + chunk_size - 1
-    ranges.append((start, end))
-
-  tracker = ProgressTracker(total=size, progress_cb=progress_cb)
-  errors = [None] * num_threads
-  threads = []
-  for i, (start, end) in enumerate(ranges):
-    t = threading.Thread(
-      target=download_range,
-      args=(final_url, headers, start, end, out_path, errors, i, cancel_event, tracker),
-    )
-    t.start()
-    threads.append(t)
-
-  for t in threads:
-    t.join()
-
-  if cancel_event.is_set():
-    raise DownloadCancelled()
-
-  failures = [e for e in errors if e is not None and not isinstance(e, DownloadCancelled)]
-  if failures:
-    # Surface the real failure instead of reporting False success on a
-    # partially-written file.
-    raise RuntimeError(f"{len(failures)}/{num_threads} chunks failed: {failures[0]}")
-
-  tracker.finish()
-  actual_size = os.path.getsize(out_path)
-  if actual_size != size:
-    raise RuntimeError(f"size mismatch after download: expected {size}, got {actual_size}")
-
-  return {"mode": "multithreaded", "threads": num_threads, "bytes": actual_size}
+  return {"mode": "single_stream", "bytes": os.path.getsize(out_path)}

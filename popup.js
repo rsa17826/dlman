@@ -1,3 +1,20 @@
+const ACTIVE = new Set(["queued", "downloading"])
+
+// Filenames and URLs come from remote servers; never put them in innerHTML raw.
+function esc(value) {
+  return String(value ?? "").replace(
+    /[&<>"']/g,
+    (c) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[c],
+  )
+}
+
 function fmtBytes(n) {
   if (n == null) return ""
   const units = ["B", "KB", "MB", "GB"]
@@ -9,12 +26,54 @@ function fmtBytes(n) {
   return `${n.toFixed(1)} ${units[i]}`
 }
 
+// aria2 runs in a background daemon that keeps going without the browser. The
+// built-in engine runs inside the native host, which stops with the browser.
+function engineTag(job) {
+  if (job.engine === "aria2") {
+    return '<span class="engine aria2" title="Downloaded by the aria2 background daemon">aria2</span>'
+  }
+  if (job.engine === "python") {
+    return '<span class="engine python" title="Downloaded by the built-in downloader (used for POST requests)">built-in</span>'
+  }
+  return ""
+}
+
+function closeHint(job) {
+  if (!ACTIVE.has(job.status)) return ""
+  if (job.engine === "aria2") {
+    return '<div class="closehint ok">✓ Safe to close the browser — aria2 keeps downloading</div>'
+  }
+  if (job.engine === "python") {
+    return '<div class="closehint warn">⚠ Keep the browser open — this download stops if it closes</div>'
+  }
+  return ""
+}
+
+function renderSummary(jobs) {
+  const active = jobs.filter((j) => ACTIVE.has(j.status))
+  const needBrowser = active.filter((j) => j.engine !== "aria2")
+  const el = document.getElementById("closeSummary")
+  if (active.length === 0) {
+    el.className = "summary hidden"
+    el.textContent = ""
+  } else if (needBrowser.length > 0) {
+    el.className = "summary warn"
+    el.textContent = `⚠ ${needBrowser.length} download${needBrowser.length > 1 ? "s" : ""} need${needBrowser.length > 1 ? "" : "s"} the browser open`
+  } else {
+    el.className = "summary ok"
+    el.textContent =
+      "✓ Safe to close the browser — all downloads continue in the background"
+  }
+}
+
 async function renderJobs() {
   const { jobs = {} } = await chrome.storage.local.get("jobs")
   const container = document.getElementById("jobs")
   const entries = Object.entries(jobs).sort(
     (a, b) => (b[1].startedAt ?? 0) - (a[1].startedAt ?? 0),
   )
+
+  renderSummary(entries.map(([, j]) => j))
 
   if (entries.length === 0) {
     container.innerHTML = '<div class="empty">No downloads yet.</div>'
@@ -35,35 +94,42 @@ async function renderJobs() {
       if (job.status === "downloading") {
         const total = job.totalBytes
         const received = job.bytesReceived ?? 0
+        const speed = job.speed ? ` · ${fmtBytes(job.speed)}/s` : ""
         if (total) {
           const pct = Math.min(100, (received / total) * 100)
           detail = `
             <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
-            <div class="url">${fmtBytes(received)} / ${fmtBytes(total)} (${Math.floor(pct)}%)</div>`
+            <div class="url">${fmtBytes(received)} / ${fmtBytes(total)} (${pct.toFixed(0)}%)${speed}</div>`
         } else {
           // Size unknown (e.g. dynamically generated content) -- show bytes
           // received without a percentage rather than a fake/frozen bar.
-          detail = `<div class="url">${fmtBytes(received)} downloaded</div>`
+          detail = `<div class="url">${fmtBytes(received)} downloaded${speed}</div>`
         }
       } else if (job.status === "done") {
-        detail = `<div class="url">${job.path ?? ""} (${fmtBytes(job.bytes)})</div>`
+        detail = `<div class="url">${esc(job.path)} (${fmtBytes(job.bytes)})</div>`
       } else if (job.status === "error") {
-        detail = `<div class="error-msg">${job.error ?? ""}</div>`
+        detail = `<div class="error-msg">${esc(job.error)}</div>`
       } else {
-        detail = `<div class="url">${job.url ?? ""}</div>`
+        detail = `<div class="url">${esc(job.url)}</div>`
       }
 
-      const showCancel =
-        job.status === "downloading" || job.status === "queued"
+      const notice =
+        job.notice ?
+          `<div class="error-msg">${esc(job.notice)}</div>`
+        : ""
+      const showCancel = ACTIVE.has(job.status)
 
       return `
         <div class="job">
-          <span class="status ${job.status}">${statusLabel}</span>
-          <span class="fname">${job.filename ?? "(unnamed)"}</span>
+          <span class="status ${esc(job.status)}">${esc(statusLabel)}</span>
+          ${engineTag(job)}
+          <span class="fname">${esc(job.filename ?? "(unnamed)")}</span>
           ${detail}
+          ${closeHint(job)}
+          ${notice}
           <div class="actions">
-            ${showCancel ? `<button class="cancelBtn" data-id="${id}">Cancel</button>` : ""}
-            <button class="deleteBtn" data-id="${id}">Delete</button>
+            ${showCancel ? `<button class="cancelBtn" data-id="${esc(id)}">Cancel</button>` : ""}
+            <button class="deleteBtn" data-id="${esc(id)}">Delete</button>
           </div>
         </div>`
     })
@@ -95,7 +161,7 @@ async function renderExcludeList() {
   list.innerHTML = excludedPatterns
     .map(
       (pattern, i) =>
-        `<li><span>${pattern}</span><button data-index="${i}" class="removeExclude">x</button></li>`,
+        `<li><span>${esc(pattern)}</span><button data-index="${i}" class="removeExclude">x</button></li>`,
     )
     .join("")
 

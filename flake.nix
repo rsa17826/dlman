@@ -27,6 +27,7 @@
             fileset = pkgs.lib.fileset.unions [
               ./downloader.py
               ./native_host.py
+              ./aria2_client.py
             ];
           };
 
