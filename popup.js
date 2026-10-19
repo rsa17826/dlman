@@ -2,17 +2,9 @@ const ACTIVE = new Set(["queued", "downloading"])
 
 // Filenames and URLs come from remote servers; never put them in innerHTML raw.
 function esc(value) {
-  return String(value ?? "").replace(
-    /[&<>"']/g,
-    (c) =>
-      ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      })[c],
-  )
+  return String(value ?? "").replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[c])
 }
 
 function fmtBytes(n) {
@@ -61,8 +53,7 @@ function renderSummary(jobs) {
     el.textContent = `⚠ ${needBrowser.length} download${needBrowser.length > 1 ? "s" : ""} need${needBrowser.length > 1 ? "" : "s"} the browser open`
   } else {
     el.className = "summary ok"
-    el.textContent =
-      "✓ Safe to close the browser — all downloads continue in the background"
+    el.textContent = "✓ Safe to close the browser — all downloads continue in the background"
   }
 }
 
@@ -83,12 +74,11 @@ async function renderJobs() {
   container.innerHTML = entries
     .map(([id, job]) => {
       const statusLabel =
-        job.status === "downloading" ? "running"
-        : job.status === "queued" ? "queued"
-        : job.status === "done" ? "completed"
-        : job.status === "error" ? "failed"
-        : job.status === "cancelled" ? "cancelled"
-        : job.status
+        job.status === "downloading" ? "running" :
+        job.status === "queued" ? "queued" :
+        job.status === "done" ? "completed" :
+        job.status === "error" ? "failed" :
+        job.status === "cancelled" ? "cancelled" : job.status
 
       let detail
       if (job.status === "downloading") {
@@ -113,10 +103,7 @@ async function renderJobs() {
         detail = `<div class="url">${esc(job.url)}</div>`
       }
 
-      const notice =
-        job.notice ?
-          `<div class="error-msg">${esc(job.notice)}</div>`
-        : ""
+      const notice = job.notice ? `<div class="error-msg">${esc(job.notice)}</div>` : ""
       const showCancel = ACTIVE.has(job.status)
 
       return `
@@ -137,26 +124,18 @@ async function renderJobs() {
 
   container.querySelectorAll(".cancelBtn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      chrome.runtime.sendMessage({
-        action: "cancel",
-        jobId: btn.dataset.id,
-      })
+      chrome.runtime.sendMessage({ action: "cancel", jobId: btn.dataset.id })
     })
   })
   container.querySelectorAll(".deleteBtn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      chrome.runtime.sendMessage({
-        action: "delete",
-        jobId: btn.dataset.id,
-      })
+      chrome.runtime.sendMessage({ action: "delete", jobId: btn.dataset.id })
     })
   })
 }
 
 async function renderExcludeList() {
-  const { excludedPatterns = [] } = await chrome.storage.local.get(
-    "excludedPatterns",
-  )
+  const { excludedPatterns = [] } = await chrome.storage.local.get("excludedPatterns")
   const list = document.getElementById("excludeList")
   list.innerHTML = excludedPatterns
     .map(
@@ -168,8 +147,7 @@ async function renderExcludeList() {
   list.querySelectorAll(".removeExclude").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const idx = Number(btn.dataset.index)
-      const { excludedPatterns = [] } =
-        await chrome.storage.local.get("excludedPatterns")
+      const { excludedPatterns = [] } = await chrome.storage.local.get("excludedPatterns")
       excludedPatterns.splice(idx, 1)
       await chrome.storage.local.set({ excludedPatterns })
       renderExcludeList()
@@ -177,22 +155,18 @@ async function renderExcludeList() {
   })
 }
 
-document
-  .getElementById("addExclude")
-  .addEventListener("click", async () => {
-    const input = document.getElementById("excludeInput")
-    const value = input.value.trim()
-    if (!value) return
-    const { excludedPatterns = [] } = await chrome.storage.local.get(
-      "excludedPatterns",
-    )
-    if (!excludedPatterns.includes(value)) {
-      excludedPatterns.push(value)
-      await chrome.storage.local.set({ excludedPatterns })
-    }
-    input.value = ""
-    renderExcludeList()
-  })
+document.getElementById("addExclude").addEventListener("click", async () => {
+  const input = document.getElementById("excludeInput")
+  const value = input.value.trim()
+  if (!value) return
+  const { excludedPatterns = [] } = await chrome.storage.local.get("excludedPatterns")
+  if (!excludedPatterns.includes(value)) {
+    excludedPatterns.push(value)
+    await chrome.storage.local.set({ excludedPatterns })
+  }
+  input.value = ""
+  renderExcludeList()
+})
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return

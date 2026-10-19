@@ -16,9 +16,7 @@ const inFlight = new Set() // download ids already forwarded, to prevent duplica
 let excludedPatterns = []
 
 async function loadExcludedPatterns() {
-  const { excludedPatterns: stored } = await chrome.storage.local.get(
-    "excludedPatterns",
-  )
+  const { excludedPatterns: stored } = await chrome.storage.local.get("excludedPatterns")
   excludedPatterns = stored ?? []
 }
 loadExcludedPatterns()
@@ -34,10 +32,7 @@ function isExcludedUrl(url) {
     // Patterns are simple "scheme://host[:port]/*" or "*://host/*" style
     // origin prefixes -- match on origin prefix, not full glob syntax.
     const prefix = pattern.replace(/\*$/, "")
-    return (
-      url.startsWith(prefix) ||
-      url.includes(prefix.replace(/^\*:\/\//, ""))
-    )
+    return url.startsWith(prefix) || url.includes(prefix.replace(/^\*:\/\//, ""))
   })
 }
 
@@ -152,45 +147,23 @@ function onHostMessage(msg) {
   if (!msg.jobId) return
   switch (msg.status) {
     case "started":
-      updateJob(
-        msg.jobId,
-        {
-          status: "downloading",
-          engine: msg.engine,
-          gid: msg.gid,
-          path: msg.path,
-          desiredPath: msg.desiredPath,
-        },
-        { onlyIfActive: true },
-      )
+      updateJob(msg.jobId, {
+        status: "downloading", engine: msg.engine, gid: msg.gid,
+        path: msg.path, desiredPath: msg.desiredPath,
+      }, { onlyIfActive: true })
       break
     case "queued":
-      updateJob(
-        msg.jobId,
-        { status: "queued", engine: msg.engine },
-        { onlyIfActive: true },
-      )
+      updateJob(msg.jobId, { status: "queued", engine: msg.engine }, { onlyIfActive: true })
       break
     case "progress":
-      updateJob(
-        msg.jobId,
-        {
-          status: "downloading",
-          engine: msg.engine,
-          bytesReceived: msg.bytesReceived,
-          totalBytes: msg.totalBytes,
-          speed: msg.speed,
-        },
-        { onlyIfActive: true },
-      )
+      updateJob(msg.jobId, {
+        status: "downloading", engine: msg.engine, bytesReceived: msg.bytesReceived,
+        totalBytes: msg.totalBytes, speed: msg.speed,
+      }, { onlyIfActive: true })
       break
     case "done":
       updateJob(msg.jobId, {
-        status: "done",
-        engine: msg.engine,
-        path: msg.path,
-        bytes: msg.bytes,
-        mode: msg.mode,
+        status: "done", engine: msg.engine, path: msg.path, bytes: msg.bytes, mode: msg.mode,
       })
       break
     case "cancelled":
@@ -217,12 +190,8 @@ function sendHello(entries) {
   sendToNativeHost({
     action: "hello",
     jobs: entries.map(([jobId, j]) => ({
-      jobId,
-      engine: j.engine,
-      gid: j.gid,
-      path: j.path,
-      desiredPath: j.desiredPath,
-      totalBytes: j.totalBytes,
+      jobId, engine: j.engine, gid: j.gid, path: j.path,
+      desiredPath: j.desiredPath, totalBytes: j.totalBytes,
     })),
   })
 }
@@ -235,8 +204,7 @@ async function resumeStaleJobs() {
   if (stale.length === 0) return
   sendHello(stale)
   // They're ours now, so a later host crash is handled like any other.
-  for (const [jobId] of stale)
-    await updateJob(jobId, { instance: INSTANCE })
+  for (const [jobId] of stale) await updateJob(jobId, { instance: INSTANCE })
 }
 resumeStaleJobs()
 
@@ -253,10 +221,7 @@ async function onHostDisconnect(port) {
   // Built-in downloads ran inside the host and died with it.
   for (const [jobId, j] of active) {
     if (j.engine !== "aria2") {
-      await updateJob(jobId, {
-        status: "error",
-        error: "the download host exited while this was running",
-      })
+      await updateJob(jobId, { status: "error", error: "the download host exited while this was running" })
     }
   }
   if (active.length === 0) return
@@ -268,10 +233,7 @@ async function onHostDisconnect(port) {
   if (++reconnects > 3) {
     for (const [jobId, j] of active) {
       if (j.engine === "aria2") {
-        await updateJob(jobId, {
-          status: "error",
-          error: "lost contact with the download host",
-        })
+        await updateJob(jobId, { status: "error", error: "lost contact with the download host" })
       }
     }
     return
@@ -291,11 +253,7 @@ chrome.runtime.onMessage.addListener((message) => {
       if (job && job.status === "done" && job.path) {
         // Ask the host to remove the actual file; the record is removed once
         // it confirms via "file_deleted", so a failed delete isn't forgotten.
-        sendToNativeHost({
-          action: "delete_file",
-          jobId: message.jobId,
-          path: job.path,
-        })
+        sendToNativeHost({ action: "delete_file", jobId: message.jobId, path: job.path })
         return
       }
       // Not a finished download with a file on disk. Stop it if it's still
@@ -311,48 +269,45 @@ chrome.runtime.onMessage.addListener((message) => {
 
 // --- Download interception --------------------------------------------------
 
-chrome.downloads.onDeterminingFilename.addListener(
-  (item, suggest) => {
-    const { id, url, filename, mime, finalUrl } = item
-    const target = finalUrl || url
+chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+  const { id, url, filename, mime, finalUrl } = item
+  const target = finalUrl || url
 
-    // blob:, data:, filesystem: etc. only exist inside the page that made them;
-    // nothing outside the browser can fetch them.
-    if (!/^https?:/i.test(target)) return
-    if (isExcludedUrl(target)) return // let Chrome handle this download normally
-    if (inFlight.has(id)) return
-    inFlight.add(id)
+  // blob:, data:, filesystem: etc. only exist inside the page that made them;
+  // nothing outside the browser can fetch them.
+  if (!/^https?:/i.test(target)) return
+  if (isExcludedUrl(target)) return // let Chrome handle this download normally
+  if (inFlight.has(id)) return
+  inFlight.add(id)
 
-    const jobId = crypto.randomUUID()
+  const jobId = crypto.randomUUID()
 
-    // We're aborting this download entirely, so don't call suggest() --
-    // there's no filename decision left for Chrome to make.
-    ;(async () => {
-      const captured =
-        pendingRequests.get(target) ?? pendingRequests.get(url)
-      const cookieHeader = await getCookiesFor(target)
+  // We're aborting this download entirely, so don't call suggest() --
+  // there's no filename decision left for Chrome to make.
+  ;(async () => {
+    const captured = pendingRequests.get(target) ?? pendingRequests.get(url)
+    const cookieHeader = await getCookiesFor(target)
 
-      await createJob(jobId, {
-        url: target,
-        filename: filename || target.split("/").pop(),
-        status: "queued",
-        startedAt: Date.now(),
-        instance: INSTANCE,
-      })
+    await createJob(jobId, {
+      url: target,
+      filename: filename || target.split("/").pop(),
+      status: "queued",
+      startedAt: Date.now(),
+      instance: INSTANCE,
+    })
 
-      await chrome.downloads.cancel(id)
-      await chrome.downloads.erase({ id })
+    await chrome.downloads.cancel(id)
+    await chrome.downloads.erase({ id })
 
-      sendToNativeHost({
-        jobId,
-        url: target,
-        filename,
-        mime,
-        method: captured?.method ?? "GET",
-        body: captured?.body ?? null,
-        headers: captured?.headers ?? [],
-        cookies: cookieHeader,
-      })
-    })()
-  },
-)
+    sendToNativeHost({
+      jobId,
+      url: target,
+      filename,
+      mime,
+      method: captured?.method ?? "GET",
+      body: captured?.body ?? null,
+      headers: captured?.headers ?? [],
+      cookies: cookieHeader,
+    })
+  })()
+})
