@@ -46,12 +46,16 @@
               runHook preInstall
 
               mkdir -p $out/bin $out/share/dlman
-              cp downloader.py native_host.py $out/share/dlman/
+              # Install everything the fileset above ships, so a module that is
+              # added to the fileset can't be forgotten here again.
+              cp *.py $out/share/dlman/
               chmod +x $out/share/dlman/native_host.py
 
+              # aria2c goes on PATH so the host can start its download daemon.
               makeWrapper ${pythonEnv}/bin/python $out/bin/dlman \
                 --add-flags "$out/share/dlman/native_host.py" \
-                --prefix PYTHONPATH : "$out/share/dlman"
+                --prefix PYTHONPATH : "$out/share/dlman" \
+                --prefix PATH : "${pkgs.lib.makeBinPath [ pkgs.aria2 ]}"
 
               runHook postInstall
             '';

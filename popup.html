@@ -1,52 +1,288 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
-<head>
-<meta charset="utf-8">
-<style>
-  body { font-family: system-ui, sans-serif; width: 380px; margin: 0; padding: 10px; font-size: 13px; }
-  h2 { font-size: 14px; margin: 6px 0; }
-  .job { border-bottom: 1px solid #ddd; padding: 6px 0; }
-  .job .fname { font-weight: 600; word-break: break-all; }
-  .job .url { color: #666; font-size: 11px; word-break: break-all; }
-  .status { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; color: #fff; }
-  .status.queued { background: #999; }
-  .status.downloading { background: #2b7de9; }
-  .status.done { background: #2e9e4f; }
-  .status.error { background: #cc3333; }
-  .status.cancelled { background: #b8860b; }
-  .progress-track { background: #eee; border-radius: 3px; height: 6px; margin: 4px 0; overflow: hidden; }
-  .progress-fill { background: #2b7de9; height: 100%; transition: width 0.2s ease; }
-  .engine { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; border: 1px solid; margin-right: 2px; }
-  .engine.aria2 { color: #1d6f3a; border-color: #1d6f3a; }
-  .engine.python { color: #9a5b00; border-color: #9a5b00; }
-  .closehint { font-size: 11px; margin: 2px 0; }
-  .closehint.ok { color: #1d6f3a; }
-  .closehint.warn { color: #9a5b00; }
-  .summary { padding: 5px 8px; border-radius: 3px; margin-bottom: 6px; font-size: 12px; }
-  .summary.ok { background: #e4f4ea; color: #1d6f3a; }
-  .summary.warn { background: #fff0d9; color: #9a5b00; }
-  .summary.hidden { display: none; }
-  .actions { margin-top: 4px; }
-  .actions button { font-size: 11px; padding: 2px 8px; margin-right: 4px; cursor: pointer; }
-  .error-msg { color: #cc3333; font-size: 11px; }
-  #excludeList { list-style: none; padding: 0; margin: 4px 0; }
-  #excludeList li { display: flex; justify-content: space-between; padding: 2px 0; }
-  #excludeInput { width: 260px; }
-  #jobs { max-height: 300px; overflow-y: auto; }
-  .empty { color: #888; padding: 8px 0; }
-</style>
-</head>
-<body>
-  <h2>Downloads</h2>
-  <div id="closeSummary" class="summary hidden"></div>
-  <div id="jobs"><div class="empty">No downloads yet.</div></div>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      /* Dark Theme Styles */
+      :root {
+        --bg-primary: #18181b;
+        --bg-secondary: #27272a;
+        --bg-tertiary: #3f3f46;
+        --text-primary: #f4f4f5;
+        --text-secondary: #a1a1aa;
+        --border-color: #3f3f46;
+        --accent-blue: #3b82f6;
+        --accent-green: #22c55e;
+        --accent-red: #ef4444;
+        --accent-amber: #f59e0b;
+      }
 
-  <h2>Excluded URLs</h2>
-  <p style="color:#666; margin: 2px 0;">Downloads from these origins go through Chrome normally, not this extension. Prefix match, e.g. <code>https://claude.ai</code>.</p>
-  <ul id="excludeList"></ul>
-  <input id="excludeInput" type="text" placeholder="https://example.com">
-  <button id="addExclude">Add</button>
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+        width: 380px;
+        margin: 0;
+        padding: 12px;
+        font-size: 13px;
+        background-color: var(--bg-primary);
+        color: var(--text-primary);
+        box-sizing: border-box;
+      }
 
-  <script src="popup.js"></script>
-</body>
+      h2 {
+        font-size: 14px;
+        margin: 6px 0;
+        color: var(--text-primary);
+        font-weight: 600;
+      }
+
+      .job {
+        border-bottom: 1px solid var(--border-color);
+        padding: 8px 0;
+      }
+
+      .job .fname {
+        font-weight: 600;
+        word-break: break-all;
+        color: #fafafa;
+      }
+
+      .job .url {
+        color: var(--text-secondary);
+        font-size: 11px;
+        word-break: break-all;
+        margin-top: 2px;
+      }
+
+      /* Status Badges */
+      .status {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 10px;
+        font-weight: 600;
+        color: #ffffff;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+      }
+
+      .status.queued {
+        background: #52525b;
+        color: #e4e4e7;
+      }
+
+      .status.downloading {
+        background: #1d4ed8;
+        color: #eff6ff;
+      }
+
+      .status.done {
+        background: #15803d;
+        color: #f0fdf4;
+      }
+
+      .status.error {
+        background: #b91c1c;
+        color: #fef2f2;
+      }
+
+      .status.cancelled {
+        background: #b45309;
+        color: #fffbeb;
+      }
+
+      /* Progress Bar */
+      .progress-track {
+        background: #27272a;
+        border-radius: 3px;
+        height: 6px;
+        margin: 6px 0;
+        overflow: hidden;
+        border: 1px solid #3f3f46;
+      }
+
+      .progress-fill {
+        background: var(--accent-blue);
+        height: 100%;
+        transition: width 0.2s ease;
+      }
+
+      /* Engine Badges */
+      .engine {
+        display: inline-block;
+        padding: 1px 6px;
+        border-radius: 3px;
+        font-size: 10px;
+        font-weight: 600;
+        border: 1px solid;
+        margin-right: 4px;
+      }
+
+      .engine.aria2 {
+        color: #4ade80;
+        border-color: #166534;
+        background: rgba(22, 101, 52, 0.2);
+      }
+
+      .engine.python {
+        color: #fbbf24;
+        border-color: #854d0e;
+        background: rgba(133, 77, 14, 0.2);
+      }
+
+      /* Hints & Messages */
+      .closehint {
+        font-size: 11px;
+        margin: 4px 0 2px 0;
+      }
+
+      .closehint.ok {
+        color: #4ade80;
+      }
+
+      .closehint.warn {
+        color: #fbbf24;
+      }
+
+      /* Summary Banners */
+      .summary {
+        padding: 6px 10px;
+        border-radius: 4px;
+        margin-bottom: 8px;
+        font-size: 12px;
+        border: 1px solid transparent;
+      }
+
+      .summary.ok {
+        background: rgba(22, 101, 52, 0.3);
+        color: #86efac;
+        border-color: rgba(34, 197, 94, 0.3);
+      }
+
+      .summary.warn {
+        background: rgba(133, 77, 14, 0.3);
+        color: #fde047;
+        border-color: rgba(234, 179, 8, 0.3);
+      }
+
+      .summary.hidden {
+        display: none;
+      }
+
+      /* Action Buttons & Inputs */
+      .actions {
+        margin-top: 6px;
+        display: flex;
+        gap: 4px;
+      }
+
+      .actions button {
+        font-size: 11px;
+        padding: 3px 8px;
+        cursor: pointer;
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 3px;
+        transition: background 0.15s ease;
+      }
+
+      .actions button:hover {
+        background: var(--bg-tertiary);
+      }
+
+      .actions button:active {
+        background: #52525b;
+      }
+
+      .error-msg {
+        color: #f87171;
+        font-size: 11px;
+        margin-top: 4px;
+      }
+
+      /* Lists and Inputs */
+      #excludeList {
+        list-style: none;
+        padding: 0;
+        margin: 6px 0;
+      }
+
+      #excludeList li {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 6px;
+        background: var(--bg-secondary);
+        border-radius: 3px;
+        margin-bottom: 3px;
+        color: var(--text-primary);
+      }
+
+      #excludeInput {
+        width: 250px;
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+        padding: 4px 8px;
+        border-radius: 3px;
+        outline: none;
+        font-size: 12px;
+      }
+
+      #excludeInput:focus {
+        border-color: var(--accent-blue);
+      }
+
+      #jobs {
+        max-height: 280px;
+        overflow-y: auto;
+        padding-right: 2px;
+      }
+
+      /* Custom Scrollbar */
+      #jobs::-webkit-scrollbar {
+        width: 5px;
+      }
+      #jobs::-webkit-scrollbar-track {
+        background: var(--bg-primary);
+      }
+      #jobs::-webkit-scrollbar-thumb {
+        background: var(--bg-tertiary);
+        border-radius: 3px;
+      }
+
+      .empty {
+        color: var(--text-secondary);
+        padding: 12px 0;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Downloads</h2>
+    <div id="closeSummary" class="summary hidden"></div>
+    <div id="jobs"><div class="empty">No downloads yet.</div></div>
+
+    <h2>Excluded URLs</h2>
+    <p style="color: #666; margin: 2px 0">
+      Downloads from these origins go through Chrome normally, not
+      this extension. Prefix match, e.g.
+      <code>https://claude.ai</code>.
+    </p>
+    <ul id="excludeList"></ul>
+    <input
+      id="excludeInput"
+      type="text"
+      placeholder="https://example.com"
+    />
+    <button id="addExclude">Add</button>
+
+    <script src="popup.js"></script>
+  </body>
 </html>
